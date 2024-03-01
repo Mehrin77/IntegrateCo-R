@@ -1,0 +1,246 @@
+---
+title: "hw2 IntegrateCo"
+format: html
+editor: visual
+---
+
+## Quarto
+
+Quarto enables you to weave together content and executable code into a finished document. To learn more about Quarto see <https://quarto.org>.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r load_libraries_and_data, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyverse)
+library(readxl)
+library(knitr)
+library(lubridate)
+
+payroll_2015<-as_tibble(read_delim("Analytics_mindset_case_studies_IntegrateCo_2015payroll.csv",
+                                   col_names=TRUE,
+                                   delim="|"))
+payroll_2016<-as_tibble(read_delim("Analytics_mindset_case_studies_IntegrateCo_2016payroll.csv",
+                                   col_names=T,
+                                   delim="|"))
+job_codes<-as_tibble(read_delim("Analytics_mindset_case_studies_IntegrateCo_jobcodes.csv",
+                                col_names=T,
+                                delim="|"))
+location<-as_tibble(read_delim("Analytics_mindset_case_studies_IntegrateCo_locations.csv",
+                               col_names=T,
+                               delim="|"))
+
+
+#Extract job_code from 2015 data & Create Year variable
+payroll_2015<- payroll_2015 |> 
+  mutate(sub=substring(Job,3,6)) |> 
+  mutate(sub_tf=str_detect(sub,"^[a-zA-Z]")) |> 
+  mutate(job_code=if_else(sub_tf==TRUE,
+                          substring(Job,4,6),
+                          substring(Job,3,5))) |> 
+  mutate(Year=2015) |> 
+  select(-sub,-sub_tf)
+
+# Extract job_code from 2015 data & create Year variable
+# 14H010-> H010
+# 14010 -> 010
+
+payroll_2016<- payroll_2016 |> 
+  mutate(sub=substring(Project,3,6)) |> 
+  mutate(sub_tf=str_detect(sub,"^[a-zA-Z]")) |> 
+  mutate(job_code=
+           if_else(sub_tf==TRUE,
+                   substring(Project,4,6),
+                   substring(Project,3,5))) |> 
+  mutate(Year=2016) |> 
+  select(-sub,-sub_tf)
+
+```
+
+```{r Change names}
+#Align variable names across the two datasets
+#Convert 2016 names to 2015 names where appropriate
+payroll_2016<-payroll_2016 |> #You need to change 2016 so that you can merge later
+  rename(Job=Project,
+         Emp_No=Employee_Number,
+         Reg_Hrs=Hours,
+         OT_Hrs=OT_Hours,
+         Fica_Medc=SocSec_Medicare,
+         Futa=FUTA,
+         Suta=SUTA)
+
+  # rename(new_name=old_name)
+
+```
+
+```{r Check primary key assumptions}
+# Check on primary key assumptions given in case!!
+# Pg. 2: "Each row represents a unique employee, 
+# job code, and pay date/payroll_id combination."
+
+
+payroll_2015 |> 
+  count(First_Name,Last_Name,Payroll_ID,Job) |> filter(n>1)
+
+inspect <- payroll_2015 |> filter(First_Name=="Cindy" & Last_Name=="Lunt") 
+
+inspect<-payroll_2015 |> filter(First_Name=="Cindy" & Last_Name=="Lunt") |> 
+  arrange(Pay_Date,Payroll_ID,Job) 
+
+# I can also inspect specific rows to make it easier to see what went wrong
+payroll_2015 |> 
+  count(Payroll_ID,First_Name,Last_Name,Job) |> filter(n>1) 
+
+inspect<-payroll_2015 |> 
+  filter(First_Name=="Maryann" & Last_Name=="Cohen" & Job=="15H001B" & Payroll_ID=="27310006") 
+
+# Check for NA's using filter():
+payroll_2015 |> 
+  filter(if_any(c(First_Name,Last_Name,Payroll_ID,Job),is.na))
+
+```
+
+```{r Align formats and merge}
+# To align with 2016 presentation, let's sum up all pay-related variables, for the same set of other characteristics,
+# using group_by (for non-wage variables) and summarize (for to-be-summed wage variables):
+# Lastly, I ungroup() at the end...otherwise, I might get unexpected groupings for 
+# later statistics I calculate!
+
+payroll_2015<-payroll_2015 |> 
+  group_by(Home_Div,
+           Work_Div,
+           Payroll_ID,
+           Pay_Date,
+           First_Name,
+           Last_Name,
+           Job,
+           Emp_No,
+           Year,
+           job_code) |> 
+  summarize(across(c(Reg_Hrs:Work_Comp), \(x) sum(x,na.rm = TRUE))) |> #\(x) is the name of the variable/input; across command works for summarize and mutate commands (see below), the \ represents "and"
+  ungroup()
+
+  #summarize(Reg_Hrs=sum(Reg_Hrs,na.rm=TRUE), OT_Hrs=sum(OT_Hrs,na.rm=TRUE) <= "Messy" way involves repeating the same     command over and over. "Across" function accomplishes the same task in a more elegant way.
+  #mutate(across(c(Reg_Hrs:Work_Comp), \(x) round(x,digits=2)))
+
+# Pithier version of above, where I use group_by(across()) to 
+# exclude variables from grouping
+
+# payroll_2015<-payroll_2015 |> 
+#   group_by(across(-(Reg_Hrs:Work_Comp))) |> 
+#   summarize(across((Reg_Hrs:Work_Comp), \(x) sum(x,na.rm = TRUE))) |> 
+#   ungroup()   
+
+# Check for duplicates. Yay, none!!
+payroll_2015 |> 
+  count(Payroll_ID,First_Name,Last_Name,Job) |> 
+  filter(n>1) 
+
+
+
+# All variables in 2016: Seems like ther are missing employee id information!
+# Will just keep these in dataset, for now.
+payroll_2016 |>  
+  count(Employee_Name,Emp_No,Job) |> 
+  filter(n>1)
+
+
+#Bind the rows together
+payroll_total<-bind_rows(payroll_2015,payroll_2016)
+
+payroll_total
+```
+
+```{r Gross Wages alignment}
+# STUDENT EXERCISE
+#Replace Gross_Wages with sum of Reg_Pay and OT_Pay if it's missing
+#   i.e., is.na(Gross_WAGES)==TRUE
+#Create Total_Hours variable
+
+#But first, pull together first and last name in 2016 data with unite()
+
+#payroll_2016<-payroll_2016 |> 
+  #unite(Name,First_Name,Last_Name,sep=" ") <= "unite" command operates the same way as "concatenate" in Excel
+
+#inspect<-payroll_total |> #Inspect observes select data without manipulating it
+payroll_total<-payroll_total |> 
+  unite(Employee_Name1,First_Name,Last_Name,sep=" ") |> #Created new column "Employee_Name1"; "Unite" auto creates new column and concatenates
+  mutate(Employee_Name=if_else(is.na(Employee_Name),Employee_Name1,Employee_Name)) |> #If Employee_Name is missing, replace with Employee_Name1, otherwise use original value; "Mutate" can be used to create new columns or modify existing ones
+  select(-Employee_Name1) #Drop Employee_Name1 column via (-) sign
+
+payroll_total<-payroll_total |> 
+  mutate(Gross_Wages=if_else(is.na(Gross_Wages),Reg_Pay+OT_Pay,Gross_Wages)) #(!) used as "not" (ex: !is.na)
+
+
+```
+
+```{r Merge in job descriptions}
+# Merge in job_codes  
+job_codes<-job_codes |> 
+  rename(job_code=Job_Code)
+
+# Worth doing an anti_join() first...will catch observations in payroll_total that might not have a matching job_code in the job_codes file:
+
+payroll_total   |>
+  anti_join(job_codes)  
+
+# Turns out, there's a job_code==144 that doesn't show up in the job_codes file! Better investigate for later:
+
+investigate <- payroll_total   |> anti_join(job_codes)
+
+# So for now, we'll do an inner_join just to get the matching job_codes. Note that payroll_total now has one less observation--the one in payroll_total with job_code==144--than before the merge:
+
+payroll_total <- payroll_total   |> inner_join(job_codes)
+payroll_total
+```
+
+########## QUESTION 1
+
+```{r Merge in job descriptions}
+
+test<-payroll_total |> 
+  full_join(location,by="Employee_Name") |>
+  group_by(Job_Description,Location) |> 
+  summarize(Gross_Wages=sum(Gross_Wages,na.rm=TRUE)) |>
+  pivot_wider(names_from = Location, values_from = Gross_Wages)
+test
+
+```
+
+########## QUESTION 2
+
+To reduce overtime pay, Noah is considering shuffling employees from one job code to another. Which job codes have the most overtime pay in 2015? Display, in this column order, all job code numbers, job code descriptions, the number of overtime hours and the amount of overtime pay. Make sure to list all job codes that were in the job code table, even if they do not show any overtime hours. Do not list any job codes that are not listed in the job code table. Sort the results so the job codes with the most overtime pay are listed first, and then alphabetically by the job code description if there are any ties.
+
+```{r}
+q2<-job_codes |> #You need to change 2016 so that you can merge later
+  #rename(job_code=Job_Code) |> 
+  left_join(payroll_2015,by="job_code") |> 
+  group_by(job_code,Job_Description) |>  
+  summarize(OT_Hrs=sum(OT_Hrs),OT_Pay=sum(OT_Pay)) |>
+  arrange(desc(OT_Pay),Job_Description) |>
+  kable(digits = 0, format.args = list(big.mark = ","))
+q2
+```
+
+### Question 3
+
+You want to investigate the relationship between Gross Wages and Total Hours (Regular and Overtime) for 2016, for the Employee Training and New Foreign Manufacturing Plant job codes; within these job codes, you’d like to see whether the relationship differs for location 1 and 2 in the data. To do so, please generate scatterplots like the one below. To get the Job Description labels to wrap as below, you’ll need the ggplot2 library, and you’ll then need to set labeller = label_wrap_gen() as a facet_wrap option. So that Location shows up as two distinct colors, add mutate(Location=as.character(Location) to your dplyr query. If you don’t do this, R will treat Location as a number and then generate a continuous color scale.
+
+```{r}
+library(ggplot2)
+q3 <- payroll_2016 |> 
+  rename(Job_Code=job_code) |>  #then rename works little opposite to what you might expect
+  left_join(job_codes,by="Job_Code") |>
+  filter(Job_Description=='Employee Training'| Job_Description=='New Foreign Manufacturing Plant') |>
+  mutate(Total_Hours=Reg_Hrs+OT_Hrs) |>
+  left_join(location,by="Employee_Name") |> 
+  mutate(Location=as.character(Location))|>
+  ggplot(aes(x=Total_Hours,y=Gross_Wages, color=Location)) +
+  geom_point() +
+  facet_wrap(~Job_Description,labeller = label_wrap_gen()) 
+
+q3
+```
